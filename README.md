@@ -1,4 +1,4 @@
-# Zeus Multimodal (Very basic demo)
+# Zeus Multimodal 1K
 ## This version of Zeus has only been trained on 1,000 steps and is just a demo that emerged from multimodal training tests. (The full version will be released soon)
 
 # Please read the [LICENSE](LICENSE.txt) before using this repository :b
