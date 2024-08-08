@@ -3,4 +3,4 @@
 
 # Please read the [LICENSE](LICENSE.txt) before using this repository :b
 
-This model is based on the Meta AI Paper, on Chameleon a native multimodal model like GPT-4o, here are some instructions to use the Zeus model
+This model is based on Chameleon's Meta AI Paper, a native multimodal model like GPT-4o, here are some instructions for using the Zeus model
