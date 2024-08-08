@@ -10,7 +10,7 @@ The use of these models and the inference library is granted solely for testing 
 License and Economic Agreement:
 To obtain authorization for the use of the model and library in a production environment, an economic agreement with Rivera.ai is required. Please contact Rivera.ai at the following email address to discuss terms and conditions: riveraaai200678@gmail.com
 
-### Rights Reserved:
+Rights Reserved:
 The copyright holder reserves all rights to the technology, algorithms used in this model, and the inference library. No part of these resources may be modified, redistributed, sublicensed, or otherwise used without the prior written consent of the copyright holder.
 
 Additional Restrictions:
