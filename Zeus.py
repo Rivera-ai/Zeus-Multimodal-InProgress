@@ -188,6 +188,8 @@ class ImageDecoder(nn.Module):
         self.image_size = image_size
 
     def forward(self, latents):
+        assert latents.size(1) == self.latent_to_patch.in_features, \
+            f"Expected latents dimension {self.latent_to_patch.in_features}, but got {latents.size(1)}"
         patches = self.latent_to_patch(latents)
         h = w = int(latents.size(1)**0.5)
         img = rearrange(patches, 'b (h w) (p1 p2 c) -> b c (h p1) (w p2)', h=h, w=w, p1=self.patch_size, p2=self.patch_size)
@@ -359,7 +361,7 @@ class MultimodalModel(nn.Module):
         self.cross_attn = CrossAttention(dim=vit_config['dim'], heads=vit_config['heads'])
         self.decoder = ImageDecoder(dim=vit_config['dim'])
         self.text_projection = nn.Linear(gpt_config.n_embd, vit_config['dim'])
-        self.lm_head = self.gpt.lm_head
+        #self.lm_head = self.gpt.lm_head
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(self.gpt.config.vocab_size, self.gpt.config.n_embd),
@@ -400,7 +402,7 @@ class MultimodalModel(nn.Module):
             image_latents = torch.cat([start_image_embedding, image_latents, end_image_embedding], dim=1)
             #print(f"image_latents (with special tokens) shape: {image_latents.shape}")
             combined_latents = self.cross_attn(text_latents, image_latents)  # Aplica atención cruzada
-            #print(f"combined_latents shape: {combined_latents.shape}")
+            print(f"combined_latents shape: {combined_latents.shape}")
             #logits = self.gpt.lm_head(combined_latents)
             return combined_latents  # Retorna los latentes combinados
 
