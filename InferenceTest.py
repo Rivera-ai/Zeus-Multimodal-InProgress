@@ -103,7 +103,7 @@ text2im = "Este es un ejemplo de texto. <Start Image>"
 generated_text = text_to_text(model, text_input, tokenizer)
 print("Texto generado:", generated_text)
 
-# Texto e imagen a texto
+# Text and image to text
 generated_text_image = text_image_to_text(model, text_input, image_path, tokenizer)
 print("Texto generado con imagen:", generated_text_image)
 
