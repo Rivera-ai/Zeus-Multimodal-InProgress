@@ -1,4 +1,4 @@
-# Zeus Multimodal 1K
+# Zeus Multimodal
 <p align="center">
   <img src="Zeusai.png" alt="Descripción de la imagen">
 </p>
@@ -8,3 +8,7 @@
 # Please read the [LICENSE](LICENSE.txt) before using this repository :b
 
 This model is based on Chameleon's Meta AI Paper, a native multimodal model like GPT-4o
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Rivera-ai/Zeus-Multimodal-InProgress&type=Date)](https://star-history.com/#Rivera-ai/Zeus-Multimodal-InProgress&Date)
