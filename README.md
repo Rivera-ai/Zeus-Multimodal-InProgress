@@ -1,6 +1,6 @@
 # Zeus Multimodal
 <p align="center">
-  <img src="Zeusai.png" alt="Descripción de la imagen">
+  <img src="Zeusaiimg.png" alt="Descripción de la imagen">
 </p>
 
 ## This repo is a preview of how the Zeus model is developing, there are still errors that will be fixed and I hope it will be soon, and thus deliver this trained model very soon :b
