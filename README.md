@@ -7,7 +7,7 @@
 
 # Please read the [LICENSE](LICENSE.txt) before using this repository :b
 
-This model is based on Chameleon's Meta AI Paper, a native multimodal model like GPT-4o
+## This model is based on Chameleon's Meta AI Paper, a native multimodal model like GPT-4o
 
 ## Download test checkpoint
 
