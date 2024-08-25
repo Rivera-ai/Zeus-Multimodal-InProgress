@@ -1,6 +1,6 @@
 import torch
 from torch.nn import functional as F
-from Zeus import MultimodalModel, LLMConfig, ViTEncoder, DEVICE  # Asegúrate de que estas importaciones sean correctas
+from Zeus import MultimodalModel, LLMConfig, ViTEncoder, DEVICE
 import tiktoken
 from PIL import Image
 import numpy as np
