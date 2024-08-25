@@ -42,7 +42,7 @@ def save_image(image_array, file_path):
     else:
         print("Image shape is correct")
 
-    image_array = (image_array * 255).astype(np.uint8)  # Convertir a formato uint8
+    image_array = (image_array * 255).astype(np.uint8) 
     image = Image.fromarray(image_array)
     image.save(file_path)
     print(f"Imagen guardada en {file_path}")
@@ -76,7 +76,7 @@ if __name__ == "__main__":
 
     # Ejemplo de generación de texto a texto
     prompt1 = 'Esto es una prueba.'
-    prompt_text = tokenizer.encode(prompt1)  # Reemplaza con tu prompt tokenizado
+    prompt_text = tokenizer.encode(prompt1)  
     generated_text = generate_text(model, prompt_text)
     generated_text = tokenizer.decode(generated_text)
     print("Generated Text:", generated_text)
