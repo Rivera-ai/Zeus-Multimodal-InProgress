@@ -1,112 +1,95 @@
 import torch
-from torchvision import transforms
+from torch.nn import functional as F
+from Zeus import MultimodalModel, LLMConfig, ViTEncoder, DEVICE  # Asegúrate de que estas importaciones sean correctas
+import tiktoken
 from PIL import Image
 import numpy as np
-import os
-from Zeus import LLMConfig, LLM, ViTEncoder, CrossAttention, ImageDecoder, MultimodalModel, SpecialTokens
 
-# I recommend only using CPU right now, because there are still some bugs when using CUDA
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+tokenizer = tiktoken.get_encoding("gpt2")
 
-# Model Configuration
-gpt_config = LLMConfig(
-    block_size=2048,
-    vocab_size=50304,
-    n_layer=12,
-    n_head=12,
-    n_embd=768,
-    dropout=0.0,
-    bias=True
-)
+def load_checkpoint(model, checkpoint_path):
+    """Carga los pesos del modelo desde un checkpoint."""
+    state_dict = torch.load(checkpoint_path, map_location='cpu')
+    model.load_state_dict(state_dict, strict=False)
+    model.to(DEVICE)
+    model.eval()
+    print(f"Checkpoint {checkpoint_path} cargado exitosamente.")
+    return model
 
-vit_config = {
-    'image_size': 256,
-    'patch_size': 16,
-    'dim': 512,
-    'depth': 12,
-    'heads': 8,
-    'mlp_dim': 1024,
-    'channels': 3
-}
+def generate_text(model, prompt, max_new_tokens=50, temperature=1.0, top_k=50):
+    """Genera texto basado en un prompt inicial."""
+    idx = torch.tensor(prompt).unsqueeze(0).to(DEVICE)
+    generated_text = model.generate(idx, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k)
+    return generated_text.squeeze(0).tolist()
+
+def generate_image_from_text(model, prompt, image_size=(256, 256), max_new_tokens=0):
+    """Genera una imagen basada en un prompt inicial."""
+    idx = torch.tensor(prompt).unsqueeze(0).to(DEVICE)
+    
+    # Asegúrate de pasar max_new_tokens
+    generated_image = model.generate(idx, max_new_tokens=max_new_tokens, generate_image=True)
+    
+    # Normalizar la imagen generada
+    generated_image = generated_image.squeeze(0).cpu().detach().numpy()
+    generated_image = np.clip(generated_image, 0, 1)
+    return generated_image
 
 
-model = MultimodalModel(gpt_config, vit_config).to(DEVICE)
+def save_image(image_array, file_path):
+    """Guarda la imagen generada en el sistema de archivos."""
+    if image_array.shape != (256, 256, 3):
+        print(f"Warning: Image shape {image_array.shape} is not (256, 256, 3)")
+    else:
+        print("Image shape is correct")
 
-# Load checkpoint, you can download it at huggingface (Clarification: it is only a test checkpoint, it has only been trained in 61 steps) link: https://huggingface.co/RiveraAI/Zeus-Multimodal-InProgress
-checkpoint_path = '/teamspace/studios/this_studio/ZeusViT/out/ckpt.pt'
-checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+    image_array = (image_array * 255).astype(np.uint8)  # Convertir a formato uint8
+    image = Image.fromarray(image_array)
+    image.save(file_path)
+    print(f"Imagen guardada en {file_path}")
 
-# Print the checkpoint keys to verify
-print("Claves en el checkpoint:", checkpoint.keys())
 
-# Load model state ignoring missing keys
-model.load_state_dict(checkpoint['model'], strict=False)
-model.eval()
+def generate_text_and_image(model, prompt, max_new_tokens=50, temperature=1.0, top_k=50):
+    """Genera texto e imagen simultáneamente a partir de un prompt inicial."""
+    idx = torch.tensor(prompt).unsqueeze(0).to(DEVICE)
+    generated_text = model.generate(idx, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k)
+    generated_image = model.generate(idx, max_new_tokens=0, generate_image=True)
+    return generated_text.squeeze(0).tolist(), generated_image.squeeze(0).cpu().detach().numpy()
 
-# Function to preprocess images
-def preprocess_image(image_path):
-    transform = transforms.Compose([
-        transforms.Resize((vit_config['image_size'], vit_config['image_size'])),
-        transforms.ToTensor()
-    ])
-    image = Image.open(image_path).convert('RGB')
-    image = transform(image).unsqueeze(0).to(DEVICE)
-    return image
+if __name__ == "__main__":
+    # Configuración del modelo
+    gpt_config = LLMConfig()
+    vit_config = {
+        "image_size": 256,
+        "patch_size": 16,
+        "dim": 512,
+        "depth": 12,
+        "heads": 8,
+        "mlp_dim": 1024,
+        "channels": 3
+    }
 
-# Function to preprocess text
-def preprocess_text(text, tokenizer):
-    tokens = tokenizer.encode(text, allowed_special={'<Start Image>'})
-    tokens = torch.tensor(tokens).unsqueeze(0).to(DEVICE)
-    return tokens
+    model = MultimodalModel(gpt_config, vit_config)
 
-# Function for text to text inference
-def text_to_text(model, text, tokenizer, max_new_tokens=50, temperature=1.0, top_k=None):
-    tokens = preprocess_text(text, tokenizer)
-    generated_tokens = model.generate(tokens, max_new_tokens, temperature, top_k)
-    generated_text = tokenizer.decode(generated_tokens[0].tolist())
-    return generated_text
+    # Ruta al checkpoint
+    checkpoint_path = "/teamspace/studios/this_studio/ZeusViT/out/ckpt.pt"
+    model = load_checkpoint(model, checkpoint_path)
 
-# Function for inference of text and image to text
-def text_image_to_text(model, text, image_path, tokenizer, max_new_tokens=50, temperature=1.0, top_k=None):
-    tokens = preprocess_text(text, tokenizer)
-    image = preprocess_image(image_path)
-    combined_latents = model(tokens, images=image, phase="multimodal")
+    # Ejemplo de generación de texto a texto
+    prompt1 = 'Esto es una prueba.'
+    prompt_text = tokenizer.encode(prompt1)  # Reemplaza con tu prompt tokenizado
+    generated_text = generate_text(model, prompt_text)
+    generated_text = tokenizer.decode(generated_text)
+    print("Generated Text:", generated_text)
 
-    # Adjust the shape of combined_latents to be [batch_size, seq_len]
-    combined_latents = combined_latents.squeeze(1)  # Delete dimension of size 1
+    prompt2 = 'Wild cat'
+    prompt_text2 = tokenizer.encode(prompt2)
 
-    # Convert combined_latents to Long type
-    combined_latents = combined_latents.long()
+    # Ejemplo de generación de imagen a partir de texto
+    generated_image = generate_image_from_text(model, prompt_text2)
+    save_image(generated_image, "generated_image.png")
 
-    generated_tokens = model.generate(combined_latents, max_new_tokens, temperature, top_k)
-    generated_text = tokenizer.decode(generated_tokens[0].tolist())
-    return generated_text
-
-# Function for text to image inference (Still buggy and not working properly, still in development/fixing)
-def text_to_image(model, text, tokenizer):
-    tokens = preprocess_text(text, tokenizer)
-    print(f"Tokens shape: {tokens.shape}")
-    generated_image = model(tokens, generate_image=True)
-    generated_image = generated_image.squeeze().cpu().numpy()
-    generated_image = (generated_image * 255).astype(np.uint8)
-    return Image.fromarray(generated_image)
-
-# Tokenizador
-tokenizer = SpecialTokens().tokenizer
-
-# Example
-text_input = "Este es un ejemplo de texto."
-image_path = "/teamspace/studios/this_studio/human.jpeg"
-text2im = "Este es un ejemplo de texto. <Start Image>"
-
-# Text2text
-generated_text = text_to_text(model, text_input, tokenizer)
-print("Texto generado:", generated_text)
-
-# Text and image to text
-generated_text_image = text_image_to_text(model, text_input, image_path, tokenizer)
-print("Texto generado con imagen:", generated_text_image)
-
-# Text2img
-#generated_image = text_to_image(model, text2im, tokenizer)
-#generated_image.show()
+    # Ejemplo de generación de texto e imagen
+    generated_text, generated_image = generate_text_and_image(model, prompt_text)
+    generated_text = tokenizer.decode(generated_text)
+    print("Generated Text:", generated_text)
+    save_image(generated_image, "generated_text_and_image.png")

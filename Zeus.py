@@ -13,25 +13,6 @@ def get_device():
 
 DEVICE = get_device()
 
-class SpecialTokens(nn.Module):
-    def __init__(self):
-        super().__init__()
-        enc = tiktoken.get_encoding("gpt2")
-
-        # Agregar los nuevos tokens especiales
-        special_tokens = ['<Start Image>', '<End Image>']
-        special_token_ids = {token: enc.n_vocab + i for i, token in enumerate(special_tokens)}
-
-        # Crear un nuevo conjunto de special tokens
-        enc._special_tokens = {**enc._special_tokens, **special_token_ids}
-
-
-        # Guardar los IDs de los tokens especiales
-        self.start_image_token_id = special_token_ids['<Start Image>']
-        self.end_image_token_id = special_token_ids['<End Image>']
-
-        self.tokenizer = enc
-
 class LayerNorm(nn.Module):
     """LayerNorm pero con un sesgo opcional. PyTorch no admite simplemente bias = Falso"""
     def __init__(self, ndim, bias) -> None:
@@ -140,7 +121,7 @@ class ViTEncoder(nn.Module):
         self.patch_to_embedding = nn.Linear(patch_dim, dim)
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(dim, heads, mlp_dim),
+            nn.TransformerEncoderLayer(dim, heads, mlp_dim, batch_first=True),
             num_layers=depth
         )
 
@@ -157,43 +138,72 @@ class ViTEncoder(nn.Module):
         return x
 
 class CrossAttention(nn.Module):
-    def __init__(self, dim, heads):
+    def __init__(self, dim, heads, num_patches):
         super().__init__()
         self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads)
+        self.num_patches = num_patches
 
     def forward(self, text_latents, image_latents):
         # Transponer los tensores para que tengan la forma esperada por nn.MultiheadAttention
-        # De [batch_size, seq_len, embed_dim] a [seq_len, batch_size, embed_dim]
         text_latents = text_latents.transpose(0, 1)
         image_latents = image_latents.transpose(0, 1)
-        #print(f"text_latents shape before transpose: {text_latents.shape}")
-        #print(f"image_latents shape before transpose: {image_latents.shape}")
-
         
         # Aplicar la atención cruzada
         attn_output, _ = self.attn(text_latents, image_latents, image_latents)
         
         # Volver a transponer el resultado para que coincida con la forma original
-        # De [seq_len, batch_size, embed_dim] a [batch_size, seq_len, embed_dim]
         attn_output = attn_output.transpose(0, 1)
+
+        # Ajustar el número de "latents" para igualar num_patches
+        if attn_output.size(1) < self.num_patches:
+            attn_output = F.pad(attn_output, (0, 0, 0, self.num_patches - attn_output.size(1)))
+        elif attn_output.size(1) > self.num_patches:
+            attn_output = attn_output[:, :self.num_patches, :]
         
         return attn_output
+
 
 
 class ImageDecoder(nn.Module):
     def __init__(self, dim=512, patch_size=16, image_size=256, channels=3):
         super().__init__()
+        self.latent_projection = nn.Linear(dim, dim)
         self.latent_to_patch = nn.Linear(dim, patch_size**2 * channels)
         self.patch_size = patch_size
         self.image_size = image_size
+        self.channels = channels
 
     def forward(self, latents):
-        assert latents.size(1) == self.latent_to_patch.in_features, \
-            f"Expected latents dimension {self.latent_to_patch.in_features}, but got {latents.size(1)}"
+        # Verificar las dimensiones de los latentes
+        num_patches = (self.image_size // self.patch_size) ** 2
+        assert latents.size(1) == num_patches, \
+            f"Expected {num_patches} latents, but got {latents.size(1)}"
+        print(f"Latents shape: {latents.shape}")
+
+        latents = self.latent_projection(latents)
         patches = self.latent_to_patch(latents)
-        h = w = int(latents.size(1)**0.5)
-        img = rearrange(patches, 'b (h w) (p1 p2 c) -> b c (h p1) (w p2)', h=h, w=w, p1=self.patch_size, p2=self.patch_size)
+        print(f"Patches shape after latent_to_patch: {patches.shape}")
+
+        # Revisar las dimensiones de los patches
+        expected_patch_dim = self.patch_size ** 2 * self.channels
+        assert patches.size(-1) == expected_patch_dim, \
+            f"Expected patch dimension {expected_patch_dim}, but got {patches.size(-1)}"
+
+        # Reconstrucción de la imagen desde los patches
+        img = rearrange(
+            patches, 
+            'b (h w) (p1 p2 c) -> b c (h p1) (w p2)', 
+            h=self.image_size // self.patch_size, 
+            w=self.image_size // self.patch_size, 
+            p1=self.patch_size, 
+            p2=self.patch_size, 
+            c=self.channels
+        )
+        print(f"Reconstructed image shape: {img.shape}")
+
         return img
+
+
 
 
 @dataclass
@@ -283,7 +293,7 @@ class LLM(nn.Module):
         x = self.transformer.ln_f(x)
 
         if return_latents:
-            return x, None
+            return x
 
         if targets is not None:
             # Si nos dan algunos objetivos deseados, también calculamos la pérdida.
@@ -355,12 +365,13 @@ class MultimodalModel(nn.Module):
     def __init__(self, gpt_config, vit_config):
         super().__init__()
         self.to(DEVICE)
-        self.special_tokens = SpecialTokens()
         self.gpt = LLM(gpt_config)
         self.vit = ViTEncoder(**vit_config)
-        self.cross_attn = CrossAttention(dim=vit_config['dim'], heads=vit_config['heads'])
+        self.cross_attn = CrossAttention(dim=vit_config['dim'], heads=vit_config['heads'], num_patches=(vit_config['image_size'] // vit_config['patch_size']) ** 2)
         self.decoder = ImageDecoder(dim=vit_config['dim'])
         self.text_projection = nn.Linear(gpt_config.n_embd, vit_config['dim'])
+        self.projection = nn.Linear(512, 768)
+        
         #self.lm_head = self.gpt.lm_head
 
         self.transformer = nn.ModuleDict(dict(
@@ -372,48 +383,35 @@ class MultimodalModel(nn.Module):
         ))
 
         
-        self.start_image_token_id = self.special_tokens.start_image_token_id
-        self.end_image_token_id = self.special_tokens.end_image_token_id
 
     def forward(self, idx, images=None, targets=None, generate_image=False, phase="text"):
         if phase == "multimodal" and images is not None:
-            # Genera representaciones latentes de la imagen y aplica atención cruzada
-            assert images.dim() == 4, f"Expected image tensor to have 4 dimensions, but got {images.dim()} dimensions"
-            text_latents, _ = self.gpt(idx)  # Obtén las representaciones textuales
-            #print(f"text_latents (before projection) shape: {text_latents.shape}")
-            text_latents = text_latents[:, :, :self.gpt.config.n_embd]
+            # Modalidad texto+imagen
+            image_latents = self.vit(images)[:, 1:]  # Eliminar el token CLS
+            text_latents = self.gpt(idx, return_latents=True)
             text_latents = self.text_projection(text_latents)
-            #print(f"text_latents (after projection) shape: {text_latents.shape}")
-        # Crear los embeddings de los tokens especiales
-            start_image_token = torch.full((idx.shape[0], 1), self.start_image_token_id, device=idx.device)
-            end_image_token = torch.full((idx.shape[0], 1), self.end_image_token_id, device=idx.device)
-        
-        # Obtener los embeddings de los tokens especiales
-            start_image_embedding = self.gpt.transformer.wte(start_image_token)
-            end_image_embedding = self.gpt.transformer.wte(end_image_token)
-        
-        # Proyectar los embeddings de los tokens especiales al espacio de la imagen
-            start_image_embedding = self.text_projection(start_image_embedding)
-            end_image_embedding = self.text_projection(end_image_embedding)
-
-            image_latents = self.vit(images)  # Obtén las representaciones de imagen
-            #print(f"image_latents shape: {image_latents.shape}")
-            # Añadir los tokens especiales a la secuencia de latentes de la imagen
-            image_latents = torch.cat([start_image_embedding, image_latents, end_image_embedding], dim=1)
-            #print(f"image_latents (with special tokens) shape: {image_latents.shape}")
-            combined_latents = self.cross_attn(text_latents, image_latents)  # Aplica atención cruzada
-            print(f"combined_latents shape: {combined_latents.shape}")
-            #logits = self.gpt.lm_head(combined_latents)
-            return combined_latents  # Retorna los latentes combinados
-
-        if generate_image:
-            text_latents, _ = self.gpt(idx)  # Obtén las representaciones textuales
-            #print(f"text_latents (for image generation) shape: {text_latents.shape}")
-            return self.decoder(text_latents)  # Genera una imagen a partir de las representaciones textuales
-
-        # Modalidad solo texto: llama al forward del LLM directamente
-        logits, loss = self.gpt(idx, targets)
-        return logits, loss
+            combined_latents = self.cross_attn(text_latents, image_latents)
+            print(f"Combined latents shape: {combined_latents.shape}")
+            
+            if generate_image:
+                # Decodificar la imagen
+                return self.decoder(combined_latents)
+                
+            else:
+                # Predecir el siguiente token (texto)
+                projected_latents = self.projection(combined_latents)
+                logits = self.gpt.lm_head(projected_latents[:, -1, :])
+                loss = None
+                if targets is not None:
+                    logits = logits.view(-1, logits.size(-1))  # (N * T, vocab_size)
+                    targets = targets.view(-1)
+                    loss = F.cross_entropy(logits, targets, ignore_index=-1)
+                    print(f"logits shape: {logits.shape}, targets shape: {targets.shape}")
+                return logits, loss
+        else:
+            # Modalidad solo texto
+            logits, loss = self.gpt(idx, targets=targets)
+            return logits, loss
 
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
@@ -473,34 +471,52 @@ class MultimodalModel(nn.Module):
         return mfu
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, generate_image=False):
+    def generate(self, idx, max_new_tokens, images=None, temperature=1.0, top_k=None, generate_image=False):
+        if images is not None:
+            # Generar imagen condicionada en el texto
+            image_latents = self.vit(images)[:, 1:]
+            print(f"Image latents shape after ViT: {image_latents.shape}")
+            text_latents = self.gpt(idx, return_latents=True)
+            print(f"Text latents shape from GPT: {text_latents.shape}")
+            text_latents = self.text_projection(text_latents)
+            print(f"Text latents shape after projection: {text_latents.shape}")
+            combined_latents = self.cross_attn(text_latents, image_latents)
+            print(f"Combined latents shape after CrossAttention: {combined_latents.shape}")
+            num_patches = (self.decoder.image_size // self.decoder.patch_size) ** 2
+            assert combined_latents.size(1) == num_patches, \
+                f"Expected {num_patches} combined latents, but got {combined_latents.size(1)}"
+
+            return self.decoder(combined_latents)
         
-        for _ in range(max_new_tokens):
+        else:
+            
+            generated_tokens = idx.clone()
+
+            for _ in range(max_new_tokens):
             # Ajusta la longitud del contexto según el tamaño del bloque
-            idx_cond = idx if idx.size(1) <= self.gpt.config.block_size else idx[:, -self.gpt.config.block_size:]
+                idx_cond = idx if idx.size(1) <= self.gpt.config.block_size else idx[:, -self.gpt.config.block_size:]
 
             # Paso forward en el modelo para obtener los logits
-            logits, _ = self.gpt(idx_cond)
+                logits, _ = self.gpt(idx_cond)
 
             # Escalar logits según la temperatura
-            logits = logits[:, -1, :] / temperature
+                logits = logits[:, -1, :] / temperature
 
             # Recorte los logits al top_k más alto
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
+                if top_k is not None:
+                    v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                    logits[logits < v[:, [-1]]] = -float('Inf')
 
             # Convertir logits a probabilidades
-            probs = F.softmax(logits, dim=-1)
+                probs = F.softmax(logits, dim=-1)
 
             # Muestreo de las probabilidades
-            idx_next = torch.multinomial(probs, num_samples=1)
+                idx_next = torch.multinomial(probs, num_samples=1)
 
             # Agregar el índice de muestra a la secuencia en ejecución
-            idx = torch.cat((idx, idx_next), dim=1)
+                idx = torch.cat((idx, idx_next), dim=1)
 
-            # Generar una imagen si se encuentra el token `<Start Image>`
-            if generate_image and idx_next.item() == self.gpt.config.vocab_size + 0:  # Suponiendo que <Start Image> sea el primer token especial
-                return self.decoder(logits)
+                generated_tokens = torch.cat((generated_tokens, idx_next), dim=1)
 
-        return idx
+
+            return idx
