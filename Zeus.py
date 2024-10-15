@@ -144,12 +144,15 @@ class CrossAttention(nn.Module):
         self.num_patches = num_patches
 
     def forward(self, text_latents, image_latents):
+        print(f"Text latents input shape: {text_latents.shape}")
+        print(f"Image latents input shape: {image_latents.shape}")
         # Transponer los tensores para que tengan la forma esperada por nn.MultiheadAttention
         text_latents = text_latents.transpose(0, 1)
         image_latents = image_latents.transpose(0, 1)
         
         # Aplicar la atención cruzada
         attn_output, _ = self.attn(text_latents, image_latents, image_latents)
+        print(f"Attention output shape: {attn_output.shape}")
         
         # Volver a transponer el resultado para que coincida con la forma original
         attn_output = attn_output.transpose(0, 1)
@@ -159,6 +162,8 @@ class CrossAttention(nn.Module):
             attn_output = F.pad(attn_output, (0, 0, 0, self.num_patches - attn_output.size(1)))
         elif attn_output.size(1) > self.num_patches:
             attn_output = attn_output[:, :self.num_patches, :]
+        
+        print(f"Combined latents output shape after padding/truncation: {attn_output.shape}")
         
         return attn_output
 
@@ -175,6 +180,7 @@ class ImageDecoder(nn.Module):
 
     def forward(self, latents):
         # Verificar las dimensiones de los latentes
+        print(f"Latents input shape: {latents.shape}")
         num_patches = (self.image_size // self.patch_size) ** 2
         assert latents.size(1) == num_patches, \
             f"Expected {num_patches} latents, but got {latents.size(1)}"
@@ -472,7 +478,9 @@ class MultimodalModel(nn.Module):
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, images=None, temperature=1.0, top_k=None, generate_image=False):
-        if images is not None:
+        print("Entering generate method")
+        if  generate_image and images is not None:
+            print("Generating image...")
             # Generar imagen condicionada en el texto
             image_latents = self.vit(images)[:, 1:]
             print(f"Image latents shape after ViT: {image_latents.shape}")
